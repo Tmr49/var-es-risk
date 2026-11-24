@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "var-es"
 version = "0.1.0"
-description = "Value-at-Risk and Expected Shortfall: historical, parametric and Monte Carlo models with regulatory backtests."
+description = "Rolling-window VaR/ES backtests of GBM Monte Carlo, Historical Simulation, GARCH(1,1)-t and EVT POT on the S&P 500."
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=2.0"]
 

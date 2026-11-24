@@ -1,74 +1,91 @@
 # var-es-risk
 
-Value-at-Risk and Expected Shortfall from first principles: six models, four backtests and a
-20-year walk-forward study on a multi-asset portfolio.
+A rolling-window backtesting framework in Python that compares four tail-risk models on
+S&P 500 daily returns from 2005 to 2026:
+
+1. **GBM Monte Carlo**, a constant-volatility, light-tailed benchmark
+2. **Historical Simulation**, which makes no distributional assumption
+3. **GARCH(1,1)-t**, with conditional volatility and Student-t innovations
+4. **EVT Peaks-over-Threshold**, which fits a Generalised Pareto tail
+
+Each trading day, every model is fitted on the previous 500 daily returns. It forecasts the
+next day's Value-at-Risk (VaR) and Expected Shortfall (ES), and the forecast is compared with
+what actually happened.
 
 [![CI](https://github.com/Tmr49/var-es-risk/actions/workflows/ci.yml/badge.svg)](https://github.com/Tmr49/var-es-risk/actions/workflows/ci.yml)
 
-## Headline result
+## Results
 
-1-day 99% VaR/ES, 500-day rolling window, re-estimated daily, on a daily-rebalanced
-40/30/15/15 SPY/TLT/GLD/EFA portfolio (Jan 2007 – Oct 2026, 4,991 forecasts; about 50 breaches
-expected).
+There are 4,991 out-of-sample forecasts, from January 2007 to October 2026.
 
-| Model              | Breaches | Rate  | Kupiec p | Christoffersen ind. p | Basel zone (last 250d) | Acerbi–Székely Z₂ |
-|:-------------------|---------:|------:|---------:|----------------------:|:-----------------------|------------------:|
-| Historical         |       67 | 1.34% |    0.021 |                <0.001 | green                  |            −0.49 |
-| Filtered HS (EWMA) |       61 | 1.22% |    0.127 |                 0.001 | green                  |            −0.26 |
-| Normal             |       97 | 1.94% |   <0.001 |                <0.001 | yellow                 |            −1.65 |
-| Student-t          |       66 | 1.32% |    0.029 |                <0.001 | green                  |            −0.43 |
-| Cornish–Fisher     |       42 | 0.84% |    0.247 |                <0.001 | green                  |            +0.07 |
-| GARCH(1,1) FHS     |       69 | 1.38% |    0.010 |                 0.003 | green                  |            −0.41 |
+**99% 1-day VaR** (about 50 breaches expected)
 
-Z₂ has expectation 0 under a correct ES model; values below about −0.7 reject at 5%
-(Acerbi & Székely, 2014).
+| Model                 | Breaches | Rate  | Kupiec p | Christoffersen ind. p | Loss / ES on breach |
+|:----------------------|---------:|------:|---------:|----------------------:|--------------------:|
+| GBM Monte Carlo       |      143 | 2.87% |   <0.001 |                <0.001 |                1.31 |
+| Historical Simulation |       83 | 1.66% |   <0.001 |                <0.001 |                1.10 |
+| GARCH(1,1)-t          |       81 | 1.62% |   <0.001 |             **0.199** |            **1.03** |
+| EVT POT (GPD)         |       83 | 1.66% |   <0.001 |                <0.001 |                1.12 |
 
-![VaR vs P&L](results/var_vs_pnl.png)
+**97.5% 1-day VaR** (about 125 breaches expected)
+
+| Model                 | Breaches | Rate  | Kupiec p | Christoffersen ind. p | Loss / ES on breach |
+|:----------------------|---------:|------:|---------:|----------------------:|--------------------:|
+| GBM Monte Carlo       |      218 | 4.37% |   <0.001 |                <0.001 |                1.30 |
+| Historical Simulation |      167 | 3.35% |   <0.001 |                <0.001 |                1.10 |
+| GARCH(1,1)-t          |      198 | 3.97% |   <0.001 |             **0.757** |            **1.02** |
+| EVT POT (GPD)         |      161 | 3.23% |    0.002 |                <0.001 |                1.10 |
+
+"Loss / ES on breach" is the average realised loss on breach days divided by the forecast
+ES. It should be close to 1 if ES is right, and values above 1 mean the model understates
+how bad breach days are.
+
+![VaR vs returns](results/var_vs_returns.png)
 ![Rolling breaches](results/rolling_breaches.png)
+![COVID zoom](results/covid_zoom.png)
 
-### What the numbers say
+### What the results show
 
-* **Normal VaR fails decisively.** About twice the expected breach count, and its ES is the only
-  one rejected by Z₂. Fat tails are real in daily returns.
-* **Unconditional coverage isn't enough.** Every model fails Christoffersen's independence
-  test. Breaches cluster in 2008, March 2020, 2022 and April 2025 because a 500-day window
-  reacts slowly to regime changes. Plain historical VaR is a step function that jumps *after*
-  the crisis and stays high for two years after it's over.
-* **Volatility conditioning helps the most.** EWMA-filtered HS gives the best combination of
-  coverage and the least clustering, and it stays in the green zone right through 2008–09
-  while plain HS, Normal and Student-t go deep into red. GARCH FHS tracks volatility just as closely but slightly under-covers here.
-* **Cornish–Fisher passes on coverage but is conservative.** It sees skew/kurtosis from the
-  2008 window and keeps VaR high. It also isn't guaranteed to be monotone for large moments,
-  so it would be a poor choice in a production limit framework.
-* **Student-t needs care.** The MLE degrees of freedom sometimes hits ν ≈ 2. Rescaling the
-  standard t by the sample standard deviation then collapses VaR towards zero. The fix
-  (see `fit_and_estimate`) uses the MLE location/scale directly, and a regression test locks
-  it in.
+* **GBM fails badly.** It breaches nearly three times as often as it should. When it does
+  breach, losses average 31% more than its ES. S&P 500 daily returns have an excess kurtosis
+  of about 13, and a normal model can't capture that.
+* **Historical Simulation and EVT are similar on coverage but react late.** They breach at
+  about the same rate. Both rely on a fixed 500-day window, so they stay calm going into a
+  crisis, breach repeatedly (2008: 21 and 20 breaches), then stay too conservative for two
+  years after it ends. That's why both fail Christoffersen's independence test. EVT's
+  advantage is in the tail *shape*. Its ES comes from a fitted GPD (full-sample ξ ≈ 0.18, a
+  power-law tail) rather than the handful of observations beyond VaR.
+* **GARCH(1,1)-t is the only model whose breaches don't cluster** (independence p = 0.20 at
+  99%, 0.76 at 97.5%). It also has the most accurate ES. It reacts within days: in March
+  2020 its VaR went from about 2% to over 20%, while the window-based models barely moved
+  (see the COVID zoom). The cost is that it under-covers in calm periods. Vol persistence
+  (α + β ≈ 0.99) makes it pull VaR down quickly once markets settle, so breaches are spread
+  across quiet years rather than bunched in crises.
+* **No model passes Kupiec at 99%.** About 1.6% is the best breach rate, against the 1%
+  target. Any 500-day calibration struggles across 2008, 2020 and 2022. The obvious next
+  step is to combine the two ideas that work: GARCH filtering for timing and an EVT tail for
+  shape (McNeil & Frey, 2000).
 
 ## Models
 
-All functions return a `RiskEstimate(var, es, alpha, horizon)` with VaR and ES as positive
-losses, as a fraction of portfolio value.
+Every function returns a `RiskEstimate(var, es, alpha, horizon)`, with VaR and ES as
+positive losses expressed as a fraction of portfolio value.
 
 | Function | Method |
 |---|---|
-| `historical_var_es` | Empirical loss quantile; ES = mean loss beyond VaR |
-| `filtered_historical_var_es` | Hull–White / Barone-Adesi: EWMA (λ = 0.94) devolatilised residuals rescaled to tomorrow's vol |
-| `normal_var_es` | VaR = −μ + σ z_α, ES = −μ + σ φ(z_α)/(1−α) |
-| `student_t_var_es` | Variance-matched t: ES = −μ + s · f_ν(q)/(1−α) · (ν + q²)/(ν − 1) |
-| `cornish_fisher_var_es` | Skew/kurtosis-adjusted quantile; ES integrates the CF quantile over the tail |
-| `mc_portfolio_var_es` | Multivariate Normal or t simulation via Cholesky, multi-day horizons by summing daily draws |
-| `fit_garch11`, `garch_mc_var_es` | Gaussian QMLE GARCH(1,1); horizon paths with bootstrapped standardised residuals |
+| `gbm_mc_var_es` | Fit μ and σ from log returns, simulate S_T/S_0 = exp((μ − σ²/2)T + σ√T Z), and read off VaR/ES |
+| `historical_var_es` | Empirical loss quantile; ES is the mean loss beyond VaR |
+| `fit_garch_t`, `garch_t_var_es` | MLE for GARCH(1,1) with unit-variance t innovations. 1-day VaR/ES comes from the conditional t in closed form; multi-day horizons simulate GARCH paths |
+| `fit_pot`, `evt_pot_var_es` | Fit a GPD to losses above the 90th percentile. VaR = u + β/ξ[((n/N_u)(1−α))^(−ξ) − 1], ES = (VaR + β − ξu)/(1 − ξ) |
 
 ## Backtests
 
 | Function | Null hypothesis |
 |---|---|
-| `kupiec_pof` | Breach rate equals 1 − α (LR ~ χ²₁) |
-| `christoffersen_independence` | Breaches follow no first-order Markov dependence (LR ~ χ²₁) |
+| `kupiec_pof` | The breach rate equals 1 − α (LR ~ χ²₁) |
+| `christoffersen_independence` | Today's breach doesn't depend on yesterday's (LR ~ χ²₁) |
 | `christoffersen_cc` | Correct coverage *and* independence (LR ~ χ²₂) |
-| `basel_traffic_light` | Basel zones from the binomial CDF (250 days at 99%: green 0–4, yellow 5–9, red 10+) |
-| `acerbi_szekely_z2` | ES correctly specified given VaR (E[Z₂] = 0) |
+| `rolling_backtest`, `summarize` | Walk-forward engine and summary table |
 
 ## Usage
 
@@ -76,19 +93,10 @@ losses, as a fraction of portfolio value.
 import pandas as pd
 import var_es as ve
 
-px = pd.read_csv("data/prices.csv", index_col=0, parse_dates=True)
-r = px.pct_change().dropna() @ [0.4, 0.3, 0.15, 0.15]
+r = pd.read_csv("data/sp500.csv", index_col=0, parse_dates=True)["close"].pct_change().dropna()
 
-ve.filtered_historical_var_es(r, alpha=0.99)
-ve.mc_portfolio_var_es(
-    px.pct_change().dropna(),
-    [0.4, 0.3, 0.15, 0.15],
-    alpha=0.975,
-    horizon=10,
-    dist="t",
-    nu=5,
-    seed=0,
-)
+ve.evt_pot_var_es(r, alpha=0.99)
+ve.garch_t_var_es(r, alpha=0.99, horizon=10, seed=0)
 
 bt = ve.rolling_backtest(r, lambda w: ve.historical_var_es(w, 0.99), window=500)
 ve.summarize(bt, 0.99)
@@ -98,27 +106,28 @@ ve.summarize(bt, 0.99)
 
 ```bash
 pip install -e ".[dev]"
-pytest                          # 24 tests, including closed-form and simulation checks
-python scripts/run_backtest.py  # about 5 min; writes results/
-python scripts/fetch_data.py    # optional: refresh data/prices.csv (needs yfinance)
+pytest                          # closed-form, simulation and parameter-recovery tests
+python scripts/run_backtest.py  # about 4 minutes; writes results/
+python scripts/fetch_data.py    # optional: refresh data/sp500.csv (pip install yfinance)
 ```
 
-Prices are adjusted closes from Yahoo Finance, cached in `data/prices.csv` so results
-reproduce offline.
+The data is S&P 500 index (^GSPC) closes from Yahoo Finance, cached in `data/sp500.csv` so
+results reproduce offline. GARCH parameters are re-estimated every 20 trading days, and the
+variance is filtered daily.
 
-## Limitations and next steps
+## Limitations
 
-* Daily rebalancing at constant weights; no transaction costs or intraday risk.
-* Square-root-of-time scaling for multi-day HS/parametric VaR ignores volatility clustering
-  (`garch_mc_var_es` addresses this).
-* Next: simulated p-values for Z₂, EVT (POT/GPD) tail model, component/incremental VaR, and
-  stressed VaR on the 2008 window as in FRTB.
+* The 500-day window and the 90% EVT threshold are fixed, not tuned. Results are sensitive
+  to both.
+* Multi-day VaR for HS and EVT uses square-root-of-time scaling.
+* Price returns only: dividends are excluded.
 
 ## References
 
+* McNeil & Frey (2000), *Estimation of tail-related risk measures for heteroscedastic
+  financial time series: an extreme value approach*.
+* McNeil, Frey & Embrechts, *Quantitative Risk Management*.
 * Kupiec (1995), *Techniques for verifying the accuracy of risk measurement models*.
 * Christoffersen (1998), *Evaluating interval forecasts*.
-* Acerbi & Székely (2014), *Backtesting Expected Shortfall*.
-* Barone-Adesi, Giannopoulos & Vosper (1999), *VaR without correlations for portfolios of
-  derivative securities*.
-* Basel Committee (1996), *Supervisory framework for the use of backtesting*.
+* Bollerslev (1987), *A conditionally heteroskedastic time series model for speculative
+  prices and rates of return*.

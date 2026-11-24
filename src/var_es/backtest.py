@@ -1,4 +1,4 @@
-"""VaR/ES backtesting: Kupiec POF, Christoffersen, Basel traffic light, Acerbi-Szekely Z2."""
+"""Rolling-window VaR backtesting: Kupiec POF and Christoffersen tests."""
 
 from __future__ import annotations
 
@@ -66,27 +66,6 @@ def christoffersen_cc(breaches: ArrayLike, alpha: float) -> TestResult:
     return TestResult(lr, float(stats.chi2.sf(lr, 2)))
 
 
-def basel_traffic_light(n_breaches: int, n_obs: int = 250, alpha: float = 0.99) -> str:
-    """Basel zone from the binomial CDF: green < 95%, yellow < 99.99%, else red.
-    With 250 days at 99% this gives green 0-4, yellow 5-9, red 10+."""
-    cdf = stats.binom.cdf(n_breaches, n_obs, 1 - alpha)
-    if cdf < 0.95:
-        return "green"
-    if cdf < 0.9999:
-        return "yellow"
-    return "red"
-
-
-def acerbi_szekely_z2(realized: ArrayLike, var: ArrayLike, es: ArrayLike, alpha: float) -> float:
-    """Acerbi-Szekely (2014) Z2 statistic, with returns as P&L and VaR/ES as positive losses.
-    E[Z2] = 0 under a correct ES model; negative values mean ES is underestimated.
-    The 5% critical value is about -0.7 (simulate for exact p-values)."""
-    x = np.asarray(realized, dtype=float)
-    v, e = np.asarray(var, dtype=float), np.asarray(es, dtype=float)
-    hit = x < -v
-    return float(np.sum(x * hit / e) / (x.size * (1 - alpha)) + 1)
-
-
 def rolling_backtest(
     returns: pd.Series,
     model: Callable[[NDArray[np.float64]], RiskEstimate],
@@ -105,7 +84,7 @@ def rolling_backtest(
 
 def summarize(bt: pd.DataFrame, alpha: float) -> dict[str, float | str]:
     b = bt["breach"].to_numpy()
-    last = b[-250:]
+    tail = bt.loc[bt["breach"] == 1]
     return {
         "n_obs": int(b.size),
         "breaches": int(b.sum()),
@@ -114,6 +93,8 @@ def summarize(bt: pd.DataFrame, alpha: float) -> dict[str, float | str]:
         "kupiec_p": kupiec_pof(b, alpha).p_value,
         "christoffersen_ind_p": christoffersen_independence(b).p_value,
         "cc_p": christoffersen_cc(b, alpha).p_value,
-        "basel_zone_last_250": basel_traffic_light(int(last.sum()), last.size, alpha),
-        "acerbi_z2": acerbi_szekely_z2(bt["realized"], bt["var"], bt["es"], alpha),
+        # ES check: on breach days, realised loss vs forecast ES (ratio ~1 if ES is right)
+        "loss_to_es_on_breach": float((-tail["realized"] / tail["es"]).mean())
+        if len(tail)
+        else float("nan"),
     }

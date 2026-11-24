@@ -33,25 +33,6 @@ def test_christoffersen_detects_clustering():
     assert not ve.christoffersen_independence(spread).reject()
 
 
-@pytest.mark.parametrize(
-    "n,zone", [(0, "green"), (4, "green"), (5, "yellow"), (9, "yellow"), (10, "red")]
-)
-def test_basel_zones(n, zone):
-    assert ve.basel_traffic_light(n) == zone
-
-
-def test_acerbi_z2_near_zero_for_correct_model():
-    rng = np.random.default_rng(0)
-    x = rng.standard_normal(200_000)
-    est = ve.normal_var_es(0, 1, 0.975)
-    z2 = ve.acerbi_szekely_z2(x, np.full(x.size, est.var), np.full(x.size, est.es), 0.975)
-    assert abs(z2) < 0.03
-    under = ve.acerbi_szekely_z2(
-        x, np.full(x.size, est.var / 2), np.full(x.size, est.es / 2), 0.975
-    )
-    assert under < -0.5
-
-
 def test_rolling_backtest_shapes_and_coverage():
     rng = np.random.default_rng(1)
     r = pd.Series(rng.normal(0, 0.01, 3000))
